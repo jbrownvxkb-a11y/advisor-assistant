@@ -230,7 +230,13 @@ def login(username: str = Form(...), password: str = Form(...)):
     return login_page(error=True)
 
 
+@app.get("/results", response_class=HTMLResponse)
+def results_page():
+    return RedirectResponse("/", status_code=302)
+
+
 @app.post("/profile", response_class=HTMLResponse)
+@app.get("/profile", response_class=HTMLResponse)
 def submit_profile(
     age: int = Form(...),
     income: str = Form(...),
