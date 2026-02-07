@@ -15,7 +15,37 @@ CACHE_TTL = 60 * 60 * 24  # 24 hours
 DATA_CACHE = {}          # {(ticker, period): (timestamp, data)}
 
 
-# ---------------- REAL DATA HELPERS ----------------
+# ---------------- STOCK UNIVERSES ----------------
+STOCK_UNIVERSES = {
+    "growth": {
+        "NVIDIA (NVDA)": "NVDA",
+        "Tesla (TSLA)": "TSLA",
+        "Meta Platforms (META)": "META",
+        "Amazon (AMZN)": "AMZN",
+        "Alphabet (GOOGL)": "GOOGL",
+        "Netflix (NFLX)": "NFLX",
+    },
+    "core": {
+        "Apple (AAPL)": "AAPL",
+        "Microsoft (MSFT)": "MSFT",
+        "Visa (V)": "V",
+        "Berkshire Hathaway (BRK.B)": "BRK-B",
+    },
+    "defensive": {
+        "Johnson & Johnson (JNJ)": "JNJ",
+        "Procter & Gamble (PG)": "PG",
+        "Coca-Cola (KO)": "KO",
+        "PepsiCo (PEP)": "PEP",
+    },
+    "cyclical": {
+        "Exxon Mobil (XOM)": "XOM",
+        "Chevron (CVX)": "CVX",
+        "JPMorgan Chase (JPM)": "JPM",
+    }
+}
+
+
+# ---------------- HELPERS ----------------
 def horizon_to_period(horizon: str):
     if "3 months" in horizon:
         return "3mo"
@@ -32,59 +62,55 @@ def horizon_to_period(horizon: str):
     return "1y"
 
 
+def select_universes(risk: int, horizon: str):
+    selected = []
+
+    if risk <= 3:
+        selected.extend(["defensive", "core"])
+    elif risk <= 6:
+        selected.extend(["core", "growth"])
+    else:
+        selected.extend(["growth", "cyclical"])
+
+    if "3 months" in horizon or "6 months" in horizon:
+        if "growth" in selected:
+            selected.remove("growth")
+
+    return selected
+
+
 def get_stock_metrics_cached(ticker: str, period: str):
-    cache_key = (ticker, period)
+    key = (ticker, period)
     now = time.time()
 
-    # Return cached data if fresh
-    if cache_key in DATA_CACHE:
-        ts, data = DATA_CACHE[cache_key]
+    if key in DATA_CACHE:
+        ts, data = DATA_CACHE[key]
         if now - ts < CACHE_TTL:
             return data
 
-    # Fetch real data
-    data = yf.download(ticker, period=period, progress=False)
-
-    if data.empty:
+    df = yf.download(ticker, period=period, progress=False)
+    if df.empty:
         return None
 
-    start_price = data["Close"].iloc[0]
-    end_price = data["Close"].iloc[-1]
-
-    total_return = (end_price - start_price) / start_price * 100
-    volatility = data["Close"].pct_change().std() * np.sqrt(252) * 100
+    start = df["Close"].iloc[0]
+    end = df["Close"].iloc[-1]
+    ret = (end - start) / start * 100
+    vol = df["Close"].pct_change().std() * np.sqrt(252) * 100
 
     result = {
-        "return": round(total_return, 2),
-        "volatility": round(volatility, 2)
+        "return": round(ret, 2),
+        "volatility": round(vol, 2)
     }
 
-    DATA_CACHE[cache_key] = (now, result)
+    DATA_CACHE[key] = (now, result)
     return result
-
-
-STOCKS = {
-    "Apple (AAPL)": "AAPL",
-    "Microsoft (MSFT)": "MSFT",
-    "NVIDIA (NVDA)": "NVDA",
-    "Amazon (AMZN)": "AMZN",
-    "Alphabet (GOOGL)": "GOOGL",
-    "Meta Platforms (META)": "META",
-    "Tesla (TSLA)": "TSLA",
-    "Berkshire Hathaway (BRK.B)": "BRK-B",
-    "Visa (V)": "V",
-    "Johnson & Johnson (JNJ)": "JNJ"
-}
 
 
 # ---------------- LOGIN PAGE ----------------
 def login_page(error=False):
-    error_html = "<p style='color:#f87171;'>Login failed</p>" if error else ""
-
     return f"""
     <html>
     <head>
-        <title>Advisor Assistant</title>
         <style>
             body {{
                 background:#0f172a;
@@ -104,9 +130,8 @@ def login_page(error=False):
             }}
             .warning {{
                 background:#1e293b;
-                color:#cbd5f5;
-                font-size:12px;
                 padding:10px;
+                font-size:12px;
                 border-radius:6px;
                 margin-bottom:15px;
             }}
@@ -131,23 +156,16 @@ def login_page(error=False):
     <body>
         <div class="card">
             <h1>Advisor Assistant</h1>
-
             <div class="warning">
-                Research tool only. Not investment advice.
-                Market data is historical and informational.
+                Research tool only. Historical data. Not investment advice.
             </div>
-
             <form method="post" action="/login">
                 <input name="username" placeholder="Username" required>
                 <input type="password" name="password" placeholder="Password" required>
                 <button type="submit">Login</button>
             </form>
-
-            {error_html}
-
-            <div class="footer">
-                Created by Justin Brown
-            </div>
+            {"<p style='color:#f87171;'>Login failed</p>" if error else ""}
+            <div class="footer">Created by Justin Brown</div>
         </div>
     </body>
     </html>
@@ -156,73 +174,36 @@ def login_page(error=False):
 
 # ---------------- PROFILE PAGE ----------------
 def profile_page():
-    age_opts = "".join(f"<option>{i}</option>" for i in range(18, 101))
-    risk_opts = "".join(f"<option>{i}</option>" for i in range(1, 11))
+    ages = "".join(f"<option>{i}</option>" for i in range(18, 101))
+    risks = "".join(f"<option>{i}</option>" for i in range(1, 11))
 
     return f"""
     <html>
-    <head>
-        <style>
-            body {{
-                background:#0f172a;
-                color:white;
-                font-family:Arial;
-                display:flex;
-                justify-content:center;
-                align-items:center;
-                height:100vh;
-            }}
-            .card {{
-                background:#020617;
-                padding:40px;
-                width:450px;
-                border-radius:12px;
-            }}
-            select,button {{
-                width:100%;
-                padding:10px;
-                margin-bottom:15px;
-            }}
-            button {{
-                background:#4f46e5;
-                border:none;
-                color:white;
-                font-weight:bold;
-            }}
-        </style>
-    </head>
-    <body>
-        <div class="card">
+    <body style="background:#0f172a;color:white;font-family:Arial;
+                 display:flex;justify-content:center;align-items:center;height:100vh;">
+        <div style="background:#020617;padding:40px;width:450px;border-radius:12px;">
             <h2>Investor Profile</h2>
             <form method="post" action="/profile">
                 <label>Age</label>
-                <select name="age">{age_opts}</select>
+                <select name="age">{ages}</select>
 
                 <label>Income</label>
                 <select name="income">
-                    <option>10k–20k</option>
-                    <option>20k–40k</option>
-                    <option>40k–60k</option>
-                    <option>60k–80k</option>
-                    <option>80k–100k</option>
-                    <option>100k–150k</option>
-                    <option>150k–300k</option>
-                    <option>300k–500k</option>
-                    <option>500k–1M</option>
-                    <option>1M+</option>
+                    <option>10k–20k</option><option>20k–40k</option>
+                    <option>40k–60k</option><option>60k–80k</option>
+                    <option>80k–100k</option><option>100k–150k</option>
+                    <option>150k–300k</option><option>300k–500k</option>
+                    <option>500k–1M</option><option>1M+</option>
                 </select>
 
                 <label>Risk (1–10)</label>
-                <select name="risk">{risk_opts}</select>
+                <select name="risk">{risks}</select>
 
                 <label>Horizon</label>
                 <select name="horizon">
-                    <option>3 months</option>
-                    <option>6 months</option>
-                    <option>1 year</option>
-                    <option>2–3 years</option>
-                    <option>4–5 years</option>
-                    <option>6–10 years</option>
+                    <option>3 months</option><option>6 months</option>
+                    <option>1 year</option><option>2–3 years</option>
+                    <option>4–5 years</option><option>6–10 years</option>
                     <option>10+ years</option>
                 </select>
 
@@ -261,18 +242,28 @@ def submit_profile(age: int = Form(...), income: str = Form(...),
                    risk: int = Form(...), horizon: str = Form(...)):
 
     period = horizon_to_period(horizon)
+    universes = select_universes(risk, horizon)
+
+    assets = []
+
+    for u in universes:
+        for name, ticker in STOCK_UNIVERSES[u].items():
+            m = get_stock_metrics_cached(ticker, period)
+            if not m:
+                continue
+            score = m["return"] / max(m["volatility"], 1)
+            assets.append((score, name, ticker, m))
+
+    assets = sorted(assets, reverse=True)[:10]
+
     cards = ""
-
-    for name, ticker in STOCKS.items():
-        metrics = get_stock_metrics_cached(ticker, period)
-        if not metrics:
-            continue
-
+    for score, name, ticker, m in assets:
         cards += f"""
-        <div class="card">
+        <div style="background:#020617;padding:20px;border-radius:10px;">
             <h3>{name}</h3>
-            <p><b>Return:</b> {metrics['return']}%</p>
-            <p><b>Volatility:</b> {metrics['volatility']}%</p>
+            <p>Return: {m['return']}%</p>
+            <p>Volatility: {m['volatility']}%</p>
+            <p>Score: {round(score,2)}</p>
             <a href="https://finance.yahoo.com/quote/{ticker}" target="_blank">
                 Read more →
             </a>
@@ -281,9 +272,9 @@ def submit_profile(age: int = Form(...), income: str = Form(...),
 
     if age >= 50:
         cards += """
-        <div class="card">
+        <div style="background:#020617;padding:20px;border-radius:10px;">
             <h3>Vanguard Total Bond ETF (BND)</h3>
-            <p>Lower volatility income-focused asset</p>
+            <p>Lower-volatility income asset</p>
             <a href="https://finance.yahoo.com/quote/BND" target="_blank">
                 Read more →
             </a>
@@ -292,36 +283,10 @@ def submit_profile(age: int = Form(...), income: str = Form(...),
 
     return f"""
     <html>
-    <head>
-        <style>
-            body {{
-                background:#0f172a;
-                color:white;
-                font-family:Arial;
-                padding:40px;
-            }}
-            .grid {{
-                display:grid;
-                grid-template-columns:repeat(auto-fit,minmax(260px,1fr));
-                gap:20px;
-            }}
-            .card {{
-                background:#020617;
-                padding:20px;
-                border-radius:10px;
-            }}
-            a {{
-                color:#60a5fa;
-                text-decoration:none;
-                font-weight:bold;
-            }}
-        </style>
-    </head>
-    <body>
+    <body style="background:#0f172a;color:white;font-family:Arial;padding:40px;">
         <h2>Suggested Assets</h2>
         <p>Age: {age} | Risk: {risk} | Horizon: {horizon}</p>
-
-        <div class="grid">
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:20px;">
             {cards}
         </div>
     </body>
