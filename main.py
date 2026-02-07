@@ -230,59 +230,66 @@ def login(username: str = Form(...), password: str = Form(...)):
     return login_page(error=True)
 
 
-@app.get("/profile", response_class=HTMLResponse)
-def profile():
-    if not logged_in:
-        return RedirectResponse("/", status_code=302)
-    return profile_page()
-
-
 @app.post("/profile", response_class=HTMLResponse)
-def submit_profile(age: int = Form(...), income: str = Form(...),
-                   risk: int = Form(...), horizon: str = Form(...)):
-
+def submit_profile(
+    age: int = Form(...),
+    income: str = Form(...),
+    risk: int = Form(...),
+    horizon: str = Form(...)
+):
     period = horizon_to_period(horizon)
     universes = select_universes(risk, horizon)
 
     assets = []
-   if not assets:
-    cards = """
-    <div style="background:#020617;padding:20px;border-radius:10px;">
-        <h3>No results available</h3>
-        <p>Market data may be temporarily unavailable. Please try again.</p>
-    </div>
-    """
-
+    cards = ""
 
     for u in universes:
         for name, ticker in STOCK_UNIVERSES[u].items():
-            m = get_stock_metrics_cached(ticker, period)
-            if not m:
+            metrics = get_stock_metrics_cached(ticker, period)
+            if not metrics:
                 continue
-            score = m["return"] / max(m["volatility"], 1)
-            assets.append((score, name, ticker, m))
 
-    assets = sorted(assets, reverse=True)[:10]
+            score = metrics["return"] / max(metrics["volatility"], 1)
 
-    cards = ""
-    for score, name, ticker, m in assets:
-        cards += f"""
+            assets.append({
+                "name": name,
+                "ticker": ticker,
+                "return": metrics["return"],
+                "volatility": metrics["volatility"],
+                "score": round(score, 2)
+            })
+
+    # Sort and limit
+    assets = sorted(assets, key=lambda x: x["score"], reverse=True)[:10]
+
+    # Safe fallback if no data
+    if not assets:
+        cards = """
         <div style="background:#020617;padding:20px;border-radius:10px;">
-            <h3>{name}</h3>
-            <p>Return: {m['return']}%</p>
-            <p>Volatility: {m['volatility']}%</p>
-            <p>Score: {round(score,2)}</p>
-            <a href="https://finance.yahoo.com/quote/{ticker}" target="_blank">
-                Read more →
-            </a>
+            <h3>No results available</h3>
+            <p>Market data may be temporarily unavailable. Please try again.</p>
         </div>
         """
+    else:
+        for a in assets:
+            cards += f"""
+            <div style="background:#020617;padding:20px;border-radius:10px;">
+                <h3>{a['name']}</h3>
+                <p><b>Return:</b> {a['return']}%</p>
+                <p><b>Volatility:</b> {a['volatility']}%</p>
+                <p><b>Risk-adjusted score:</b> {a['score']}</p>
+                <a href="https://finance.yahoo.com/quote/{a['ticker']}" target="_blank">
+                    Read more →
+                </a>
+            </div>
+            """
 
+    # Bonds for older profiles
     if age >= 50:
         cards += """
         <div style="background:#020617;padding:20px;border-radius:10px;">
             <h3>Vanguard Total Bond ETF (BND)</h3>
-            <p>Lower-volatility income asset</p>
+            <p>Lower-volatility income-focused asset</p>
             <a href="https://finance.yahoo.com/quote/BND" target="_blank">
                 Read more →
             </a>
@@ -294,9 +301,15 @@ def submit_profile(age: int = Form(...), income: str = Form(...),
     <body style="background:#0f172a;color:white;font-family:Arial;padding:40px;">
         <h2>Suggested Assets</h2>
         <p>Age: {age} | Risk: {risk} | Horizon: {horizon}</p>
-        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:20px;">
+
+        <div style="
+            display:grid;
+            grid-template-columns:repeat(auto-fit,minmax(260px,1fr));
+            gap:20px;
+        ">
             {cards}
         </div>
     </body>
     </html>
     """
+
