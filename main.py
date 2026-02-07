@@ -1,9 +1,8 @@
-import yfinance as yf
-import pandas as pd
-import numpy as np
-
 from fastapi import FastAPI, Form
 from fastapi.responses import HTMLResponse, RedirectResponse
+import yfinance as yf
+import numpy as np
+import time
 
 app = FastAPI()
 
@@ -12,71 +11,143 @@ USERNAME = "5th"
 PASSWORD = "ave"
 logged_in = False
 
+CACHE_TTL = 60 * 60 * 24  # 24 hours
+DATA_CACHE = {}          # {(ticker, period): (timestamp, data)}
+
+
+# ---------------- REAL DATA HELPERS ----------------
+def horizon_to_period(horizon: str):
+    if "3 months" in horizon:
+        return "3mo"
+    if "6 months" in horizon:
+        return "6mo"
+    if "1 year" in horizon:
+        return "1y"
+    if "2–3" in horizon:
+        return "3y"
+    if "4–5" in horizon:
+        return "5y"
+    if "6–10" in horizon or "10+" in horizon:
+        return "10y"
+    return "1y"
+
+
+def get_stock_metrics_cached(ticker: str, period: str):
+    cache_key = (ticker, period)
+    now = time.time()
+
+    # Return cached data if fresh
+    if cache_key in DATA_CACHE:
+        ts, data = DATA_CACHE[cache_key]
+        if now - ts < CACHE_TTL:
+            return data
+
+    # Fetch real data
+    data = yf.download(ticker, period=period, progress=False)
+
+    if data.empty:
+        return None
+
+    start_price = data["Close"].iloc[0]
+    end_price = data["Close"].iloc[-1]
+
+    total_return = (end_price - start_price) / start_price * 100
+    volatility = data["Close"].pct_change().std() * np.sqrt(252) * 100
+
+    result = {
+        "return": round(total_return, 2),
+        "volatility": round(volatility, 2)
+    }
+
+    DATA_CACHE[cache_key] = (now, result)
+    return result
+
+
+STOCKS = {
+    "Apple (AAPL)": "AAPL",
+    "Microsoft (MSFT)": "MSFT",
+    "NVIDIA (NVDA)": "NVDA",
+    "Amazon (AMZN)": "AMZN",
+    "Alphabet (GOOGL)": "GOOGL",
+    "Meta Platforms (META)": "META",
+    "Tesla (TSLA)": "TSLA",
+    "Berkshire Hathaway (BRK.B)": "BRK-B",
+    "Visa (V)": "V",
+    "Johnson & Johnson (JNJ)": "JNJ"
+}
+
 
 # ---------------- LOGIN PAGE ----------------
 def login_page(error=False):
     error_html = "<p style='color:#f87171;'>Login failed</p>" if error else ""
 
     return f"""
-    <!DOCTYPE html>
     <html>
     <head>
         <title>Advisor Assistant</title>
         <style>
             body {{
-                margin: 0;
-                height: 100vh;
-                display: flex;
-                justify-content: center;
-                align-items: center;
-                background: #0f172a;
-                font-family: Arial, sans-serif;
-                color: white;
+                background:#0f172a;
+                color:white;
+                font-family:Arial;
+                height:100vh;
+                display:flex;
+                justify-content:center;
+                align-items:center;
             }}
             .card {{
-                background: #020617;
-                padding: 40px;
-                width: 360px;
-                border-radius: 12px;
-                box-shadow: 0 0 30px rgba(0,0,0,0.6);
-                text-align: center;
+                background:#020617;
+                padding:40px;
+                width:380px;
+                border-radius:12px;
+                text-align:center;
             }}
-            h1 {{
-                font-size: 28px;
-                margin-bottom: 25px;
+            .warning {{
+                background:#1e293b;
+                color:#cbd5f5;
+                font-size:12px;
+                padding:10px;
+                border-radius:6px;
+                margin-bottom:15px;
             }}
-            input {{
-                width: 100%;
-                padding: 12px;
-                margin-top: 10px;
-                border-radius: 6px;
-                border: none;
+            input,button {{
+                width:100%;
+                padding:12px;
+                margin-top:10px;
             }}
             button {{
-                margin-top: 20px;
-                width: 100%;
-                padding: 12px;
-                background: #4f46e5;
-                border: none;
-                border-radius: 6px;
-                color: white;
-                font-weight: bold;
-                cursor: pointer;
+                background:#4f46e5;
+                border:none;
+                color:white;
+                font-weight:bold;
             }}
-            button:hover {{
-                background: #4338ca;
+            .footer {{
+                margin-top:15px;
+                font-size:11px;
+                color:#94a3b8;
             }}
         </style>
     </head>
     <body>
         <div class="card">
             <h1>Advisor Assistant</h1>
+
+            <div class="warning">
+                Research tool only. Not investment advice.
+                Market data is historical and informational.
+            </div>
+
             <form method="post" action="/login">
                 <input name="username" placeholder="Username" required>
                 <input type="password" name="password" placeholder="Password" required>
                 <button type="submit">Login</button>
             </form>
+
             {error_html}
+
+            <div class="footer">
+                Created by Justin Brown
+            </div>
         </div>
     </body>
     </html>
@@ -85,59 +156,49 @@ def login_page(error=False):
 
 # ---------------- PROFILE PAGE ----------------
 def profile_page():
-    age_options = "".join(f"<option>{i}</option>" for i in range(18, 101))
-    risk_options = "".join(f"<option>{i}</option>" for i in range(1, 11))
+    age_opts = "".join(f"<option>{i}</option>" for i in range(18, 101))
+    risk_opts = "".join(f"<option>{i}</option>" for i in range(1, 11))
 
     return f"""
     <html>
     <head>
-        <title>Investor Profile</title>
         <style>
             body {{
-                background: #0f172a;
-                color: white;
-                font-family: Arial;
-                display: flex;
-                justify-content: center;
-                align-items: center;
-                height: 100vh;
+                background:#0f172a;
+                color:white;
+                font-family:Arial;
+                display:flex;
+                justify-content:center;
+                align-items:center;
+                height:100vh;
             }}
             .card {{
-                background: #020617;
-                padding: 40px;
-                width: 450px;
-                border-radius: 12px;
+                background:#020617;
+                padding:40px;
+                width:450px;
+                border-radius:12px;
             }}
-            label {{
-                font-weight: bold;
-            }}
-            select {{
-                width: 100%;
-                padding: 10px;
-                margin: 6px 0 16px 0;
-                border-radius: 6px;
-                border: none;
+            select,button {{
+                width:100%;
+                padding:10px;
+                margin-bottom:15px;
             }}
             button {{
-                width: 100%;
-                padding: 12px;
-                background: #4f46e5;
-                border: none;
-                border-radius: 6px;
-                color: white;
-                font-weight: bold;
+                background:#4f46e5;
+                border:none;
+                color:white;
+                font-weight:bold;
             }}
         </style>
     </head>
     <body>
         <div class="card">
-            <h2 style="text-align:center;">Investor Profile</h2>
-
+            <h2>Investor Profile</h2>
             <form method="post" action="/profile">
                 <label>Age</label>
-                <select name="age">{age_options}</select>
+                <select name="age">{age_opts}</select>
 
-                <label>Annual Income</label>
+                <label>Income</label>
                 <select name="income">
                     <option>10k–20k</option>
                     <option>20k–40k</option>
@@ -151,10 +212,10 @@ def profile_page():
                     <option>1M+</option>
                 </select>
 
-                <label>Risk Tolerance (1–10)</label>
-                <select name="risk">{risk_options}</select>
+                <label>Risk (1–10)</label>
+                <select name="risk">{risk_opts}</select>
 
-                <label>Investment Horizon</label>
+                <label>Horizon</label>
                 <select name="horizon">
                     <option>3 months</option>
                     <option>6 months</option>
@@ -165,7 +226,7 @@ def profile_page():
                     <option>10+ years</option>
                 </select>
 
-                <button type="submit">Continue</button>
+                <button type="submit">View Results</button>
             </form>
         </div>
     </body>
@@ -196,97 +257,73 @@ def profile():
 
 
 @app.post("/profile", response_class=HTMLResponse)
-def submit_profile(
-    age: int = Form(...),
-    income: str = Form(...),
-    risk: int = Form(...),
-    horizon: str = Form(...)
-):
-    if not logged_in:
-        return RedirectResponse("/", status_code=302)
+def submit_profile(age: int = Form(...), income: str = Form(...),
+                   risk: int = Form(...), horizon: str = Form(...)):
 
-    # -------- ASSETS --------
-    assets = [
-        ("Apple (AAPL)", "Stock", "+18%", "12%", "https://finance.yahoo.com/quote/AAPL"),
-        ("Microsoft (MSFT)", "Stock", "+22%", "14%", "https://finance.yahoo.com/quote/MSFT"),
-        ("NVIDIA (NVDA)", "Stock", "+95%", "38%", "https://finance.yahoo.com/quote/NVDA"),
-        ("Amazon (AMZN)", "Stock", "+45%", "16%", "https://finance.yahoo.com/quote/AMZN"),
-        ("Alphabet (GOOGL)", "Stock", "+34%", "15%", "https://finance.yahoo.com/quote/GOOGL"),
-        ("Meta Platforms (META)", "Stock", "+60%", "20%", "https://finance.yahoo.com/quote/META"),
-        ("Tesla (TSLA)", "Stock", "+12%", "18%", "https://finance.yahoo.com/quote/TSLA"),
-        ("Berkshire Hathaway (BRK.B)", "Stock", "+20%", "13%", "https://finance.yahoo.com/quote/BRK-B"),
-        ("Visa (V)", "Stock", "+25%", "14%", "https://finance.yahoo.com/quote/V"),
-        ("Johnson & Johnson (JNJ)", "Stock", "+10%", "9%", "https://finance.yahoo.com/quote/JNJ"),
-    ]
-
-    if age >= 50:
-        assets.extend([
-            ("US Treasury 10Y Note", "Bond", "+3.8%", "4%", "https://www.treasurydirect.gov"),
-            ("Vanguard Total Bond ETF (BND)", "Bond ETF", "+5%", "4.5%", "https://investor.vanguard.com")
-        ])
-
+    period = horizon_to_period(horizon)
     cards = ""
-    for name, typ, recent, yearly, link in assets:
+
+    for name, ticker in STOCKS.items():
+        metrics = get_stock_metrics_cached(ticker, period)
+        if not metrics:
+            continue
+
         cards += f"""
         <div class="card">
             <h3>{name}</h3>
-            <p><b>Type:</b> {typ}</p>
-            <p><b>Recent Performance:</b> {recent}</p>
-            <p><b>Avg Yearly Return:</b> {yearly}</p>
-            <a href="{link}" target="_blank">Read more →</a>
+            <p><b>Return:</b> {metrics['return']}%</p>
+            <p><b>Volatility:</b> {metrics['volatility']}%</p>
+            <a href="https://finance.yahoo.com/quote/{ticker}" target="_blank">
+                Read more →
+            </a>
+        </div>
+        """
+
+    if age >= 50:
+        cards += """
+        <div class="card">
+            <h3>Vanguard Total Bond ETF (BND)</h3>
+            <p>Lower volatility income-focused asset</p>
+            <a href="https://finance.yahoo.com/quote/BND" target="_blank">
+                Read more →
+            </a>
         </div>
         """
 
     return f"""
     <html>
     <head>
-        <title>Top Assets</title>
         <style>
             body {{
-                background: #0f172a;
-                color: white;
-                font-family: Arial;
-                margin: 0;
-                padding: 40px;
-            }}
-            h2 {{
-                text-align: center;
-            }}
-            .summary {{
-                text-align: center;
-                color: #cbd5f5;
-                margin-bottom: 30px;
+                background:#0f172a;
+                color:white;
+                font-family:Arial;
+                padding:40px;
             }}
             .grid {{
-                display: grid;
-                grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-                gap: 20px;
+                display:grid;
+                grid-template-columns:repeat(auto-fit,minmax(260px,1fr));
+                gap:20px;
             }}
             .card {{
-                background: #020617;
-                padding: 20px;
-                border-radius: 10px;
+                background:#020617;
+                padding:20px;
+                border-radius:10px;
             }}
             a {{
-                color: #60a5fa;
-                font-weight: bold;
-                text-decoration: none;
+                color:#60a5fa;
+                text-decoration:none;
+                font-weight:bold;
             }}
         </style>
     </head>
     <body>
-        <h2>Suggested Assets (Research Only)</h2>
-        <p class="summary">
-            Age: {age} | Income: {income} | Risk: {risk} | Horizon: {horizon}
-        </p>
+        <h2>Suggested Assets</h2>
+        <p>Age: {age} | Risk: {risk} | Horizon: {horizon}</p>
 
         <div class="grid">
             {cards}
         </div>
-
-        <p style="margin-top:40px;color:#94a3b8;text-align:center;">
-            Educational purposes only. Not financial advice.
-        </p>
     </body>
     </html>
     """
