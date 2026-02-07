@@ -6,7 +6,7 @@ import time
 
 app = FastAPI()
 
-# ---------------- CONFIG ----------------
+# ================= CONFIG =================
 USERNAME = "5th"
 PASSWORD = "ave"
 logged_in = False
@@ -14,8 +14,7 @@ logged_in = False
 CACHE_TTL = 60 * 60 * 24  # 24 hours
 DATA_CACHE = {}          # {(ticker, period): (timestamp, data)}
 
-
-# ---------------- STOCK UNIVERSES ----------------
+# ================= STOCK UNIVERSES =================
 STOCK_UNIVERSES = {
     "growth": {
         "NVIDIA (NVDA)": "NVDA",
@@ -44,9 +43,8 @@ STOCK_UNIVERSES = {
     }
 }
 
-
-# ---------------- HELPERS ----------------
-def horizon_to_period(horizon: str):
+# ================= HELPERS =================
+def horizon_to_period(horizon: str) -> str:
     if "3 months" in horizon:
         return "3mo"
     if "6 months" in horizon:
@@ -66,15 +64,14 @@ def select_universes(risk: int, horizon: str):
     selected = []
 
     if risk <= 3:
-        selected.extend(["defensive", "core"])
+        selected = ["defensive", "core"]
     elif risk <= 6:
-        selected.extend(["core", "growth"])
+        selected = ["core", "growth"]
     else:
-        selected.extend(["growth", "cyclical"])
+        selected = ["growth", "cyclical"]
 
     if "3 months" in horizon or "6 months" in horizon:
-        if "growth" in selected:
-            selected.remove("growth")
+        selected = [u for u in selected if u != "growth"]
 
     return selected
 
@@ -88,91 +85,64 @@ def get_stock_metrics_cached(ticker: str, period: str):
         if now - ts < CACHE_TTL:
             return data
 
-    df = yf.download(ticker, period=period, progress=False)
-    if df.empty:
+    try:
+        df = yf.download(ticker, period=period, progress=False)
+        if df.empty:
+            return None
+
+        start = float(df["Close"].iloc[0])
+        end = float(df["Close"].iloc[-1])
+        ret = (end - start) / start * 100
+        vol = df["Close"].pct_change().std() * np.sqrt(252) * 100
+
+        result = {
+            "return": round(ret, 2),
+            "volatility": round(vol, 2)
+        }
+
+        DATA_CACHE[key] = (now, result)
+        return result
+
+    except Exception:
         return None
 
-    start = df["Close"].iloc[0]
-    end = df["Close"].iloc[-1]
-    ret = (end - start) / start * 100
-    vol = df["Close"].pct_change().std() * np.sqrt(252) * 100
-
-    result = {
-        "return": round(ret, 2),
-        "volatility": round(vol, 2)
-    }
-
-    DATA_CACHE[key] = (now, result)
-    return result
-
-
-# ---------------- LOGIN PAGE ----------------
+# ================= UI BUILDERS =================
 def login_page(error=False):
+    error_html = "<p style='color:#f87171;'>Login failed</p>" if error else ""
     return f"""
     <html>
-    <head>
-        <style>
-            body {{
-                background:#0f172a;
-                color:white;
-                font-family:Arial;
-                height:100vh;
-                display:flex;
-                justify-content:center;
-                align-items:center;
-            }}
-            .card {{
-                background:#020617;
-                padding:40px;
-                width:380px;
-                border-radius:12px;
-                text-align:center;
-            }}
-            .warning {{
-                background:#1e293b;
-                padding:10px;
-                font-size:12px;
-                border-radius:6px;
-                margin-bottom:15px;
-            }}
-            input,button {{
-                width:100%;
-                padding:12px;
-                margin-top:10px;
-            }}
-            button {{
-                background:#4f46e5;
-                border:none;
-                color:white;
-                font-weight:bold;
-            }}
-            .footer {{
-                margin-top:15px;
-                font-size:11px;
-                color:#94a3b8;
-            }}
-        </style>
-    </head>
-    <body>
-        <div class="card">
+    <body style="background:#0f172a;color:white;font-family:Arial;
+                 height:100vh;display:flex;justify-content:center;align-items:center;">
+        <div style="background:#020617;padding:40px;width:380px;border-radius:12px;text-align:center;">
             <h1>Advisor Assistant</h1>
-            <div class="warning">
+
+            <div style="background:#1e293b;padding:10px;font-size:12px;border-radius:6px;margin-bottom:15px;">
                 Research tool only. Historical data. Not investment advice.
             </div>
+
             <form method="post" action="/login">
-                <input name="username" placeholder="Username" required>
-                <input type="password" name="password" placeholder="Password" required>
-                <button type="submit">Login</button>
+                <input name="username" placeholder="Username" required
+                       style="width:100%;padding:12px;margin-top:10px;">
+                <input type="password" name="password" placeholder="Password" required
+                       style="width:100%;padding:12px;margin-top:10px;">
+                <button type="submit"
+                        style="width:100%;padding:12px;margin-top:10px;
+                               background:#4f46e5;color:white;font-weight:bold;border:none;">
+                    Login
+                </button>
             </form>
-            {"<p style='color:#f87171;'>Login failed</p>" if error else ""}
-            <div class="footer">Created by Justin Brown</div>
+
+            {error_html}
+
+            <div style="margin-top:15px;font-size:11px;color:#94a3b8;">
+                Created by Justin Brown
+            </div>
         </div>
     </body>
     </html>
     """
 
 
-# ---------------- PROFILE PAGE ----------------
 def profile_page():
     ages = "".join(f"<option>{i}</option>" for i in range(18, 101))
     risks = "".join(f"<option>{i}</option>" for i in range(1, 11))
@@ -180,9 +150,10 @@ def profile_page():
     return f"""
     <html>
     <body style="background:#0f172a;color:white;font-family:Arial;
-                 display:flex;justify-content:center;align-items:center;height:100vh;">
+                 height:100vh;display:flex;justify-content:center;align-items:center;">
         <div style="background:#020617;padding:40px;width:450px;border-radius:12px;">
             <h2>Investor Profile</h2>
+
             <form method="post" action="/profile">
                 <label>Age</label>
                 <select name="age">{ages}</select>
@@ -207,15 +178,18 @@ def profile_page():
                     <option>10+ years</option>
                 </select>
 
-                <button type="submit">View Results</button>
+                <button type="submit"
+                        style="width:100%;padding:12px;margin-top:15px;
+                               background:#4f46e5;color:white;font-weight:bold;border:none;">
+                    View Results
+                </button>
             </form>
         </div>
     </body>
     </html>
     """
 
-
-# ---------------- ROUTES ----------------
+# ================= ROUTES =================
 @app.get("/", response_class=HTMLResponse)
 def home():
     return login_page()
@@ -230,13 +204,14 @@ def login(username: str = Form(...), password: str = Form(...)):
     return login_page(error=True)
 
 
-@app.get("/results", response_class=HTMLResponse)
-def results_page():
-    return RedirectResponse("/", status_code=302)
+@app.get("/profile", response_class=HTMLResponse)
+def profile():
+    if not logged_in:
+        return RedirectResponse("/", status_code=302)
+    return profile_page()
 
 
 @app.post("/profile", response_class=HTMLResponse)
-@app.get("/profile", response_class=HTMLResponse)
 def submit_profile(
     age: int = Form(...),
     income: str = Form(...),
@@ -246,56 +221,46 @@ def submit_profile(
     period = horizon_to_period(horizon)
     universes = select_universes(risk, horizon)
 
-    assets = []
     cards = ""
+    assets = []
 
     for u in universes:
         for name, ticker in STOCK_UNIVERSES[u].items():
             metrics = get_stock_metrics_cached(ticker, period)
             if not metrics:
                 continue
-
             score = metrics["return"] / max(metrics["volatility"], 1)
+            assets.append((score, name, ticker, metrics))
 
-            assets.append({
-                "name": name,
-                "ticker": ticker,
-                "return": metrics["return"],
-                "volatility": metrics["volatility"],
-                "score": round(score, 2)
-            })
+    assets.sort(reverse=True)
+    assets = assets[:10]
 
-    # Sort and limit
-    assets = sorted(assets, key=lambda x: x["score"], reverse=True)[:10]
-
-    # Safe fallback if no data
     if not assets:
         cards = """
         <div style="background:#020617;padding:20px;border-radius:10px;">
             <h3>No results available</h3>
-            <p>Market data may be temporarily unavailable. Please try again.</p>
+            <p>Market data may be temporarily unavailable.</p>
         </div>
         """
     else:
-        for a in assets:
+        for score, name, ticker, m in assets:
             cards += f"""
             <div style="background:#020617;padding:20px;border-radius:10px;">
-                <h3>{a['name']}</h3>
-                <p><b>Return:</b> {a['return']}%</p>
-                <p><b>Volatility:</b> {a['volatility']}%</p>
-                <p><b>Risk-adjusted score:</b> {a['score']}</p>
-                <a href="https://finance.yahoo.com/quote/{a['ticker']}" target="_blank">
+                <h3>{name}</h3>
+                <p>Return: {m['return']}%</p>
+                <p>Volatility: {m['volatility']}%</p>
+                <p>Score: {round(score,2)}</p>
+                <a href="https://finance.yahoo.com/quote/{ticker}" target="_blank">
                     Read more →
                 </a>
             </div>
             """
 
-    # Bonds for older profiles
     if age >= 50:
         cards += """
         <div style="background:#020617;padding:20px;border-radius:10px;">
             <h3>Vanguard Total Bond ETF (BND)</h3>
-            <p>Lower-volatility income-focused asset</p>
+            <p>Lower-volatility income asset</p>
             <a href="https://finance.yahoo.com/quote/BND" target="_blank">
                 Read more →
             </a>
@@ -308,14 +273,9 @@ def submit_profile(
         <h2>Suggested Assets</h2>
         <p>Age: {age} | Risk: {risk} | Horizon: {horizon}</p>
 
-        <div style="
-            display:grid;
-            grid-template-columns:repeat(auto-fit,minmax(260px,1fr));
-            gap:20px;
-        ">
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:20px;">
             {cards}
         </div>
     </body>
     </html>
     """
-
