@@ -245,6 +245,14 @@ def submit_profile(age: int = Form(...), income: str = Form(...),
     universes = select_universes(risk, horizon)
 
     assets = []
+   if not assets:
+    cards = """
+    <div style="background:#020617;padding:20px;border-radius:10px;">
+        <h3>No results available</h3>
+        <p>Market data may be temporarily unavailable. Please try again.</p>
+    </div>
+    """
+
 
     for u in universes:
         for name, ticker in STOCK_UNIVERSES[u].items():
