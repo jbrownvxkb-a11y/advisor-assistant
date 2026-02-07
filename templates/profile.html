@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Investor Profile</title>
+</head>
+<body>
+    <h1>Investor Profile</h1>
+
+    <form method="post" action="/profile">
+
+        <!-- Age -->
+        <label>Age:</label><br>
+        <select name="age">
+            {% for a in range(18, 101) %}
+            <option value="{{ a }}">{{ a }}</option>
+            {% endfor %}
+        </select><br><br>
+
+        <!-- Income -->
+        <label>Annual Income:</label><br>
+        <select name="income">
+            <option>10k–20k</option>
+            <option>20k–40k</option>
+            <option>40k–60k</option>
+            <option>60k–80k</option>
+            <option>80k–100k</option>
+            <option>100k–150k</option>
+            <option>150k–300k</option>
+            <option>300k–500k</option>
+            <option>500k–1M</option>
+            <option>1M+</option>
+        </select><br><br>
+
+        <!-- Risk -->
+        <label>Risk Tolerance (1 = Conservative, 10 = Aggressive):</label><br>
+        <select name="risk">
+            {% for r in range(1, 11) %}
+            <option value="{{ r }}">{{ r }}</option>
+            {% endfor %}
+        </select><br><br>
+
+        <!-- Horizon -->
+        <label>Investment Horizon:</label><br>
+        <select name="horizon">
+            <option>3 months</option>
+            <option>6 months</option>
+            <option>1 year</option>
+            <option>2–3 years</option>
+            <option>4–5 years</option>
+            <option>6–10 years</option>
+            <option>10+ years</option>
+        </select><br><br>
+
+        <button type="submit">Continue</button>
+    </form>
+
+</body>
+</html>
